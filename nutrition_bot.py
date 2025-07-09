@@ -3,10 +3,10 @@ import logging
 import sqlite3
 import json
 import time
+import tempfile
 from datetime import datetime
 import requests
 from io import BytesIO
-from PIL import Image
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
@@ -125,36 +125,45 @@ class NutritionBot:
             'fat': result[3] or 0
         }
 
-    async def analyze_food_image(self, image_url: str):
+    async def analyze_food_image(self, image_data: bytes):
         """Analyze food image using Gemini API"""
         try:
-            # Download image
-            response = requests.get(image_url)
-            image_data = response.content
+            # Save image to temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_file:
+                tmp_file.write(image_data)
+                tmp_file_path = tmp_file.name
             
-            prompt = """
-            Analyze this food image and provide nutritional information in JSON format:
-            
-            {
-                "is_food": true/false,
-                "food_items": ["item1", "item2"],
-                "nutrition": {
-                    "calories": number,
-                    "protein": number,
-                    "carbs": number,
-                    "fat": number
-                },
-                "confidence": "high/medium/low",
-                "comment": "motivational comment about the food"
-            }
-            
-            If this is NOT food, set is_food to false.
-            """
-            
-            # Create a proper image object for Gemini
-            image = Image.open(BytesIO(image_data))
-            
-            response = model.generate_content([prompt, image])
+            try:
+                # Upload file to Gemini
+                uploaded_file = genai.upload_file(tmp_file_path, mime_type='image/jpeg')
+                
+                prompt = """
+                Analyze this food image and provide nutritional information in JSON format:
+                
+                {
+                    "is_food": true/false,
+                    "food_items": ["item1", "item2"],
+                    "nutrition": {
+                        "calories": number,
+                        "protein": number,
+                        "carbs": number,
+                        "fat": number
+                    },
+                    "confidence": "high/medium/low",
+                    "comment": "motivational comment about the food"
+                }
+                
+                If this is NOT food, set is_food to false.
+                """
+                
+                response = model.generate_content([prompt, uploaded_file])
+                
+                # Clean up
+                genai.delete_file(uploaded_file.name)
+                
+            finally:
+                # Clean up temp file
+                os.unlink(tmp_file_path)
             
             # Parse JSON response
             response_text = response.text.strip()
@@ -325,13 +334,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text("🔍 Analyzing food...")
     
-    # Get photo URL
+    # Get photo and download it
     photo = update.message.photo[-1]
     file = await context.bot.get_file(photo.file_id)
-    file_url = file.file_path
+    
+    # Download image data
+    image_data = await file.download_as_bytearray()
     
     # Analyze with Gemini
-    analysis = await nutrition_bot.analyze_food_image(file_url)
+    analysis = await nutrition_bot.analyze_food_image(bytes(image_data))
     
     if not analysis.get('is_food', False):
         await update.message.reply_text("I don't see food in this image. Please send a clear food photo! 🍽️")

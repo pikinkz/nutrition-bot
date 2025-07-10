@@ -132,13 +132,23 @@ class NutritionBot:
 
     async def analyze_refined_content(self, original_analysis: dict, correction_content):
         """Performs a re-analysis based on user correction."""
-        prompt = f"""
-        A user wants to correct a food analysis.
-        Original Analysis: {json.dumps(original_analysis)}
-        User's Correction: The user has provided the following new information (text or a new image).
+        original_food_items = ", ".join(original_analysis.get("food_items", ["food"]))
         
-        Please provide a new, updated nutritional analysis in the same JSON format as the original, taking the user's correction into account.
-        For example, if they say 'the portion was bigger', increase the nutritional values. If they say 'I had 2 scoops', multiply the values.
+        prompt = f"""
+        A user is correcting a nutritional analysis for a meal initially identified as: '{original_food_items}'.
+        The user's correction is provided in the content that follows this prompt.
+        
+        Based on this correction, please provide a new, complete nutritional analysis.
+        For example, if the correction is 'there was also bacon', add the nutrition for bacon. If it's 'the portion was 50% bigger', increase all values by 50%.
+
+        Return ONLY a valid JSON object with the following structure, no other text or markdown:
+        {{
+            "is_food": true,
+            "food_items": ["updated item1", "updated item2", ...],
+            "nutrition": {{ "calories": number, "protein": number, "carbs": number, "fat": number }},
+            "confidence": "high/medium/low",
+            "comment": "A new motivational comment about the updated meal."
+        }}
         """
         return await self._analyze_with_gemini([prompt, correction_content])
 

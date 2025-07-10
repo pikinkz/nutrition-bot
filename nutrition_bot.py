@@ -249,7 +249,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     daily_totals = nutrition_bot.get_daily_totals(user_id, target_date)
     protein_percentage = (daily_totals['protein'] / profile['protein_goal']) * 100 if profile['protein_goal'] > 0 else 0
     date_formatted = "Today's" if target_date == date.today() else f"{target_date.strftime('%A, %b %d')}"
-    message = f"📊 *{date_formatted} Summary*\n\n"
+    message = f"� *{date_formatted} Summary*\n\n"
     message += f"• *Calories:* {daily_totals['calories']:.0f}\n"
     message += f"• *Protein:* {daily_totals['protein']:.1f}g / {profile['protein_goal']:.0f}g ({protein_percentage:.0f}%)\n"
     message += f"• *Carbs:* {daily_totals['carbs']:.1f}g\n"
@@ -291,7 +291,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_file:
         tmp_file.write(image_data)
-        uploaded_file = await genai.upload_file_async(tmp_file.name, mime_type='image/jpeg')
+        # Corrected: Use the synchronous upload_file method as there is no async version.
+        uploaded_file = genai.upload_file(tmp_file.name, mime_type='image/jpeg')
     
     await handle_generic_message(update, context, uploaded_file)
 
@@ -457,3 +458,4 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+�

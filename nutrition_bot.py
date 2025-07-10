@@ -177,7 +177,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
-# ... (profile_command, edit_profile_command, delete_last_command, stats_command are unchanged)
 @authorized
 async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     profile = nutrition_bot.get_user_profile(update.effective_user.id)
@@ -265,21 +264,17 @@ async def handle_generic_message(update: Update, context: ContextTypes.DEFAULT_T
         await handle_setup(update, context, update.message.text)
         return
     
-    # Check if we are in refinement mode
     if 'refining_meal_id' in context.user_data:
         await update.message.reply_text("🔍 Re-analyzing with your corrections...")
         meal_id = context.user_data['refining_meal_id']
         original_analysis = nutrition_bot.pending_meals[update.effective_user.id][meal_id]['analysis']
         
-        # Get refined analysis
         new_analysis = await nutrition_bot.analyze_refined_content(original_analysis, content)
         
-        # Clean up refinement state
         del context.user_data['refining_meal_id']
         
         await process_analysis_result(update, context, new_analysis, is_refined=True)
     else:
-        # Standard initial analysis
         await update.message.reply_text("🔍 Analyzing food...")
         analysis = await nutrition_bot.analyze_initial_content(content)
         await process_analysis_result(update, context, analysis)
@@ -294,14 +289,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file = await context.bot.get_file(photo.file_id)
     image_data = await file.download_as_bytearray()
 
-    # We need to upload the image to Gemini to get a handle for it
     with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_file:
         tmp_file.write(image_data)
         uploaded_file = genai.upload_file(tmp_file.name, mime_type='image/jpeg')
     
     await handle_generic_message(update, context, uploaded_file)
-    # It's better to clean up the uploaded file after it's used, but state management for that is complex.
-    # For a single-user bot, this is acceptable for now.
+
 
 async def process_analysis_result(update: Update, context: ContextTypes.DEFAULT_TYPE, analysis: dict, is_refined: bool = False):
     """Shared function to process and display analysis from Gemini."""
@@ -334,7 +327,7 @@ async def process_analysis_result(update: Update, context: ContextTypes.DEFAULT_
     nutrition_bot.pending_meals[user_id][meal_id] = {
         'description': food_items, 'calories': nutrition['calories'],
         'protein': nutrition['protein'], 'carbs': nutrition['carbs'], 'fat': nutrition['fat'],
-        'analysis': analysis # Store the full analysis for potential refinement
+        'analysis': analysis
     }
     
     keyboard = [
@@ -382,15 +375,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id in nutrition_bot.pending_meals and meal_id in nutrition_bot.pending_meals[user_id]:
             meal_data = nutrition_bot.pending_meals[user_id][meal_id]
             nutrition_bot.log_meal(user_id, meal_data)
-            del nutrition_bot.pending_meals[user_id][meal_id]
+            if meal_id in nutrition_bot.pending_meals[user_id]:
+                 del nutrition_bot.pending_meals[user_id][meal_id]
             await query.edit_message_text("✅ Meal logged successfully!")
-            await stats_command(update, context) # Show updated stats
+            await stats_command(update, context) 
     elif data.startswith('refine_'):
         meal_id = data.split('_')[1]
         context.user_data['refining_meal_id'] = meal_id
         await query.edit_message_text("Okay, what needs to be corrected? Send me a text (e.g., 'the portion was bigger') or a new photo.")
     elif data == 'cancel':
-        # Clear any pending refinement state
         if 'refining_meal_id' in context.user_data:
             del context.user_data['refining_meal_id']
         await query.edit_message_text("❌ Action canceled.")
@@ -433,13 +426,16 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
         logger.info("Scheduled report skipped: No meals logged yesterday.")
 
 # --- Main Application ---
-def main():
+async def main():
     if not all([TELEGRAM_TOKEN, GEMINI_API_KEY, AUTHORIZED_USER_ID]):
         logger.critical("CRITICAL: Missing environment variables!")
         return
     logger.info("Starting bot...")
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     
+    # This line is important for polling bots. It clears any old updates.
+    await application.bot.delete_webhook(drop_pending_updates=True)
+
     # Register handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
@@ -460,4 +456,5 @@ def main():
     application.run_polling()
 
 if __name__ == '__main__':
-    main()
+    import asyncio
+    asyncio.run(main())

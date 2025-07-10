@@ -107,7 +107,7 @@ class NutritionBot:
     async def _analyze_with_gemini(self, prompt_parts: list):
         """Generic helper to call Gemini API and parse JSON response."""
         try:
-            response = model.generate_content(prompt_parts)
+            response = await model.generate_content_async(prompt_parts)
             response_text = response.text.strip().replace('```json', '').replace('```', '')
             return json.loads(response_text)
         except Exception as e:
@@ -291,7 +291,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_file:
         tmp_file.write(image_data)
-        uploaded_file = genai.upload_file(tmp_file.name, mime_type='image/jpeg')
+        uploaded_file = await genai.upload_file_async(tmp_file.name, mime_type='image/jpeg')
     
     await handle_generic_message(update, context, uploaded_file)
 
@@ -426,16 +426,15 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
         logger.info("Scheduled report skipped: No meals logged yesterday.")
 
 # --- Main Application ---
-async def main():
+def main() -> None:
+    """Start the bot."""
     if not all([TELEGRAM_TOKEN, GEMINI_API_KEY, AUTHORIZED_USER_ID]):
         logger.critical("CRITICAL: Missing environment variables!")
         return
     logger.info("Starting bot...")
+    
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    # This line is important for polling bots. It clears any old updates.
-    await application.bot.delete_webhook(drop_pending_updates=True)
-
     # Register handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
@@ -453,8 +452,8 @@ async def main():
     job_queue.run_daily(send_daily_report, time=report_time, chat_id=AUTHORIZED_USER_ID)
     logger.info(f"Scheduler started. Daily report set for {report_time} UTC.")
     
-    application.run_polling()
+    # Run the bot until the user presses Ctrl-C
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
-    import asyncio
-    asyncio.run(main())
+    main()

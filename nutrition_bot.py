@@ -2,14 +2,13 @@ import os
 import logging
 import sqlite3
 import json
-import time
+import time as python_time
 import tempfile
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, time as dt_time
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import google.generativeai as genai
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # --- Configuration ---
 # Configure logging to see bot activity and errors
@@ -202,8 +201,6 @@ def authorized(handler):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
         user_id = update.effective_user.id
         if user_id != AUTHORIZED_USER_ID:
-            # Silently ignore unauthorized users, or reply with a message
-            # await update.message.reply_text("Sorry, this bot is private.")
             logger.warning(f"Unauthorized access attempt by user_id: {user_id}")
             return
         return await handler(update, context, *args, **kwargs)
@@ -289,7 +286,6 @@ async def edit_profile_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     try:
-        # Update the profile dictionary and recalculate goals if weight changes
         if field == 'age':
             profile[field] = int(value)
         else:
@@ -315,7 +311,7 @@ async def delete_last_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     last_meal = nutrition_bot.get_last_meal(user_id)
 
     if not last_meal:
-        await update.message.reply_text("❌ No meals logged yet today to delete.")
+        await update.message.reply_text("❌ No meals logged yet to delete.")
         return
     
     meal_id, description = last_meal
@@ -359,24 +355,18 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @authorized
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles text messages for setup or food logging."""
-    user_id = update.effective_user.id
-    text = update.message.text
-    
-    # Handle user setup if it's in progress
     if 'setup_step' in context.user_data:
-        await handle_setup(update, context, text)
+        await handle_setup(update, context, update.message.text)
         return
     
-    # Otherwise, treat the text as a food description
     await update.message.reply_text("🔍 Analyzing food description...")
-    analysis = await nutrition_bot.analyze_food_text(text)
+    analysis = await nutrition_bot.analyze_food_text(update.message.text)
     await process_analysis_result(update, context, analysis)
 
 @authorized
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles food photo uploads."""
-    profile = nutrition_bot.get_user_profile(update.effective_user.id)
-    if not profile:
+    if not nutrition_bot.get_user_profile(update.effective_user.id):
         await update.message.reply_text("Please set up your profile first with /start")
         return
     
@@ -413,9 +403,8 @@ async def process_analysis_result(update: Update, context: ContextTypes.DEFAULT_
     if analysis.get('comment'):
         message += f"💭 _{analysis['comment']}_\n\n"
     
-    meal_id = str(int(time.time()))
+    meal_id = str(int(python_time.time()))
     
-    # Store pending meal data
     if user_id not in nutrition_bot.pending_meals:
         nutrition_bot.pending_meals[user_id] = {}
     
@@ -463,13 +452,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     
-    # Prevent unauthorized users from using callbacks
     if user_id != AUTHORIZED_USER_ID:
         await query.answer("Unauthorized", show_alert=True)
         return
     
-    await query.answer() # Acknowledge the button press
-    
+    await query.answer()
     data = query.data
     
     if data.startswith('sex_'):
@@ -482,7 +469,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         profile_data = context.user_data['profile_data']
         profile_data['activity_level'] = data.split('_')[1]
         
-        # Calculate initial protein goal
         weight = profile_data['weight']
         multiplier = {'sedentary': 0.8, 'active': 1.2, 'veryactive': 1.6}
         protein_goal = round(weight * multiplier.get(profile_data['activity_level'], 1.0))
@@ -506,7 +492,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             meal_data = nutrition_bot.pending_meals[user_id][meal_id]
             nutrition_bot.log_meal(user_id, meal_data)
             
-            # Show updated daily totals after logging
             profile = nutrition_bot.get_user_profile(user_id)
             daily_totals = nutrition_bot.get_daily_totals(user_id, date.today())
             protein_percentage = (daily_totals['protein'] / profile['protein_goal']) * 100 if profile['protein_goal'] > 0 else 0
@@ -539,7 +524,6 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
     yesterday = date.today() - timedelta(days=1)
     totals = nutrition_bot.get_daily_totals(user_id, yesterday)
     
-    # Only send a report if there's data
     if totals['calories'] > 0:
         protein_percentage = (totals['protein'] / profile['protein_goal']) * 100 if profile['protein_goal'] > 0 else 0
         message = f"☀️ *Good Morning! Here's your summary for {yesterday.strftime('%A')}*\n\n"
@@ -556,7 +540,7 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
 def main():
     """Main function to set up and run the bot."""
     if not all([TELEGRAM_TOKEN, GEMINI_API_KEY, AUTHORIZED_USER_ID]):
-        logger.critical("CRITICAL: Missing one or more environment variables! (TELEGRAM_TOKEN, GEMINI_API_KEY, AUTHORIZED_USER_ID)")
+        logger.critical("CRITICAL: Missing one or more environment variables!")
         return
     
     logger.info("Starting bot...")
@@ -578,11 +562,15 @@ def main():
     # Register callback handler for inline buttons
     application.add_handler(CallbackQueryHandler(handle_callback))
     
-    # Set up and start the scheduler for daily reports
-    scheduler = AsyncIOScheduler(timezone="Asia/Almaty") # Set your timezone
-    scheduler.add_job(send_daily_report, 'cron', hour=8, minute=0, args=[application])
-    scheduler.start()
-    logger.info("Scheduler started. Daily report set for 8:00 AM.")
+    # Use the built-in job queue for scheduling
+    job_queue = application.job_queue
+    
+    # Schedule the report for 8:00 AM local time.
+    # NOTE: Render servers run on UTC. To get 8 AM in Almaty (GMT+5), we need 3 AM UTC.
+    report_time = dt_time(hour=3, minute=0, second=0)
+    job_queue.run_daily(send_daily_report, time=report_time, chat_id=AUTHORIZED_USER_ID)
+    
+    logger.info(f"Scheduler started. Daily report set for {report_time} UTC.")
     
     # Start the bot
     application.run_polling()

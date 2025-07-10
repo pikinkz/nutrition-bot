@@ -240,10 +240,6 @@ async def delete_last_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @authorized
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Shows daily stats. This command is now safe to be called from both
-    a CommandHandler and a CallbackQueryHandler.
-    """
     chat = update.effective_chat
     if not chat:
         logger.warning("Could not determine chat to send stats to.")
@@ -282,6 +278,11 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Message and Photo Handlers ---
 async def handle_generic_message(update: Update, context: ContextTypes.DEFAULT_TYPE, content):
     """Handles all incoming content (text/photo) for analysis or refinement."""
+    # **FIX**: Check for profile before any processing
+    if not nutrition_bot.get_user_profile(update.effective_user.id):
+        await update.message.reply_text("Please run /start to set up your profile first.")
+        return
+
     if 'setup_step' in context.user_data:
         await handle_setup(update, context, update.message.text)
         return

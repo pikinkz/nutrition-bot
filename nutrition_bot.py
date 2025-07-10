@@ -240,11 +240,21 @@ async def delete_last_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @authorized
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Shows daily stats. This command is now safe to be called from both
+    a CommandHandler and a CallbackQueryHandler.
+    """
+    chat = update.effective_chat
+    if not chat:
+        logger.warning("Could not determine chat to send stats to.")
+        return
+
     user_id = update.effective_user.id
     profile = nutrition_bot.get_user_profile(user_id)
     if not profile:
-        await update.message.reply_text("Please set up your profile first with /start")
+        await chat.send_message("Please set up your profile first with /start")
         return
+
     target_date = date.today()
     if context.args:
         date_str = context.args[0].lower()
@@ -254,8 +264,9 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
             except ValueError:
-                await update.message.reply_text("Invalid date format. Use YYYY-MM-DD or 'yesterday'.")
+                await chat.send_message("Invalid date format. Use YYYY-MM-DD or 'yesterday'.")
                 return
+    
     daily_totals = nutrition_bot.get_daily_totals(user_id, target_date)
     protein_percentage = (daily_totals['protein'] / profile['protein_goal']) * 100 if profile['protein_goal'] > 0 else 0
     date_formatted = "Today's" if target_date == date.today() else f"{target_date.strftime('%A, %b %d')}"
@@ -264,7 +275,8 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message += f"• *Protein:* {daily_totals['protein']:.1f}g / {profile['protein_goal']:.0f}g ({protein_percentage:.0f}%)\n"
     message += f"• *Carbs:* {daily_totals['carbs']:.1f}g\n"
     message += f"• *Fat:* {daily_totals['fat']:.1f}g\n"
-    await update.message.reply_text(message, parse_mode='Markdown')
+    
+    await chat.send_message(message, parse_mode='Markdown')
 
 
 # --- Message and Photo Handlers ---
